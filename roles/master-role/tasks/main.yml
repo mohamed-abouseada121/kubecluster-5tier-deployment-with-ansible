@@ -1,41 +1,168 @@
+---
+# ==========================================================
+#  Kubernetes Installation + Containerd Runtime Setup
+# ==========================================================
 
-- name: turn off the swap memory
+- name: Ensure keyring directory exists
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
+
+- name: Add Kubernetes repository GPG key
+  ansible.builtin.get_url:
+    url: https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key
+    dest: /etc/apt/keyrings/kubernetes-release.key
+    mode: '0644'
+
+- name: Convert GPG key format
+  ansible.builtin.command: >
+    gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg /etc/apt/keyrings/kubernetes-release.key
+  args:
+    creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+- name: Add Kubernetes repo
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/kubernetes.list
+    content: |
+      deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /
+    mode: '0644'
+
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: yes
+
+# ==========================================================
+#  System Prep
+# ==========================================================
+- name: Disable swap
   command: swapoff -a
+  tags: [kubernetes, prep]
 
-- name: Install epel and memcached
-  package:
-    name: 
-     - docker
-     - ca-certificates
-     - curl
-     - gnupg
+- name: Ensure swap disabled persistently
+  replace:
+    path: /etc/fstab
+    regexp: '^\s*([^#]\S*\s+swap\s+)'
+    replace: '#\1'
+  tags: [kubernetes, prep]
+
+- name: Ensure kernel modules are loaded persistently
+  copy:
+    dest: /etc/modules-load.d/k8s.conf
+    content: |
+      br_netfilter
+      overlay
+
+- name: Load modules immediately
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - br_netfilter
+    - overlay
+
+- name: Apply Kubernetes sysctl params (runtime + permanent)
+  ansible.builtin.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    state: present
+    reload: yes
+  loop:
+    - { key: 'net.bridge.bridge-nf-call-iptables',  value: '1' }
+    - { key: 'net.bridge.bridge-nf-call-ip6tables', value: '1' }
+    - { key: 'net.ipv4.ip_forward',                 value: '1' }
+
+
+# ==========================================================
+#  Install Kubernetes + Container Runtime
+# ==========================================================
+- name: Install containerd + kube packages
+  ansible.builtin.apt:
+    name:
+      - containerd
+      - docker.io
+      - apt-transport-https
+      - curl
+      - ca-certificates
+      - gnupg
+      - software-properties-common
+      - kubeadm
+      - kubelet
+      - kubectl
     state: present
     update_cache: yes
 
-- name: test docker
-  command: docker run hello-world
-- name: Enable & start memcached
-  systemd:
-    name: memcached
-    enabled: yes
-    state: started
+- name: Hold Kubernetes packages
+  dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop: [kubeadm, kubelet, kubectl]
 
+# ==========================================================
+#  Containerd Config
+# ==========================================================
+- name: Generate default containerd config
+  command: containerd config default
+  register: containerd_default_config
+  changed_when: false
 
-- name: Copy memcached config
-  template:
-    src: memcached.j2
-    dest: /etc/sysconfig/memcached
-    owner: root
-    group: root
+- name: Write containerd config
+  ansible.builtin.copy:
+    dest: /etc/containerd/config.toml
+    content: "{{ containerd_default_config.stdout }}"
     mode: '0644'
-  notify: restart memcached
+  notify: Restart containerd
+
+- name: Enable SystemdCgroup
+  ansible.builtin.replace:
+    path: /etc/containerd/config.toml
+    regexp: 'SystemdCgroup = false'
+    replace: 'SystemdCgroup = true'
+  notify: Restart containerd
+
+# ==========================================================
+#  Kubernetes Cluster Init
+# ==========================================================
+- name: Start Kubernetes Cluster with Pod CIDR
+  ansible.builtin.command: kubeadm init --pod-network-cidr=10.244.0.0/16
+  register: kubeadm_init_result
+  args:
+    creates: /etc/kubernetes/admin.conf
+
+- name: Create kube config directory
+  ansible.builtin.file:
+    path: "{{ ansible_user_dir }}/.kube"
+    state: directory
+    owner: "{{ ansible_user_id }}"
+    group: "{{ ansible_user_gid }}"
+    mode: '0755'
+
+- name: Copy admin.conf to user's kube config
+  ansible.builtin.copy:
+    src: /etc/kubernetes/admin.conf
+    dest: "{{ ansible_user_dir }}/.kube/config"
+    remote_src: yes
+    owner: "{{ ansible_user_id }}"
+    group: "{{ ansible_user_gid }}"
+    mode: '0600'
+
+- name: Export kubeconfig in /etc/profile.d for persistent kubectl usage
+  ansible.builtin.copy:
+    dest: /etc/profile.d/k8s.sh
+    content: |
+      export KUBECONFIG=/etc/kubernetes/admin.conf
+
+- name: Install Flannel CNI after control-plane up
+  ansible.builtin.command: kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+
+- name: Generate fresh kubeadm join command
+  ansible.builtin.command: kubeadm token create --print-join-command
+  register: fresh_join_command
+
+- name: Save join command for workers
+  ansible.builtin.set_fact:
+    k8s_join_command: "{{ fresh_join_command.stdout }}"
 
 
-- name: open port 11211
-  ansible.posix.firewalld:
-    zone: public
-    port: 11211/tcp
-    permanent: true
-    state: enabled
-    immediate: yes
-  notify: restart firewalld
