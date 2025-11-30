@@ -162,13 +162,14 @@
   ansible.builtin.command: kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
+  changed_when: false
 
 - name: Generate fresh kubeadm join command
   ansible.builtin.command: kubeadm token create --print-join-command
   register: fresh_join_command
 
+
 - name: Save join command for workers
   ansible.builtin.set_fact:
     k8s_join_command: "{{ fresh_join_command.stdout }}"
-
-
+    cacheable: yes
