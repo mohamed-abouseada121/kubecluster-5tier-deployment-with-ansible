@@ -1,0 +1,122 @@
+- name: make keyring dir
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
+
+- name: add key
+  ansible.builtin.shell:
+    cmd: "curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg"
+    creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg 
+
+- name: copy repo
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/kubernetes.list
+    content: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name:
+  ansible.builtin.apt:
+    update_cache: yes
+- name: turn off the swap memory
+  command: swapoff -a
+
+- name: start network overlay in kernal
+  command: modprobe overlay && modprobe br_netfilter
+
+- name: Set network rules to allow pods traffic
+  blockinfile:
+    path: /etc/sysctl.d/kubernetes.conf
+    create: yes
+    block: |
+      net.bridge.bridge-nf-call-iptables  = 1
+      net.ipv4.ip_forward                 = 1
+      net.bridge.bridge-nf-call-ip6tables = 1
+
+- name: Apply sysctl changes
+  command: sysctl --system
+
+- name: Install epel and memcached
+  package:
+    name: 
+     - docker
+     - containerd
+     - ca-certificates
+     - curl
+     - gnupg
+     - apt-transport-https 
+     - software-properties-common
+     - kubeadm
+     - kubelet
+     - kubectl
+    state: present
+    update_cache: yes
+
+
+
+
+- name: Hold kube packages
+  dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop:
+    - kubeadm
+    - kubelet
+    - kubectl
+
+- name: Ensure containerd config directory exists
+  file:
+    path: /etc/containerd
+    state: directory
+    mode: '0755'
+
+- name: Generate default containerd config
+  command: containerd config default
+  register: containerd_default_config
+
+- name: Write containerd config to /etc/containerd/config.toml
+  copy:
+    content: "{{ containerd_default_config.stdout }}"
+    dest: /etc/containerd/config.toml
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: active cgroup
+  ansible.builtin.lineinfile:
+    path: /etc/containerd/config.toml
+    regexp: '^\s*SystemdCgroup\s*=\s*false'
+    line: '          SystemdCgroup = true'
+    backup: yes
+
+
+
+- name: Enable and restart containerd
+  systemd:
+    name: containerd
+    enabled: yes
+    state: restarted
+
+
+- name: test docker
+  command: docker run hello-world
+
+
+- name: start cluster at cidr 10.244.0.0\16
+  command: kubeadm init --pod-network-cidr=10.244.0.0/16
+
+- name: make .kube dir
+  ansible.builtin.file:
+    path: "{{ ansible_user_dir }}/.kube"
+    state: directory
+    mode: '0755'
+- name: copy aidmn conf
+  ansible.builtin.copy:
+    src: /etc/kubernetes/admin.conf
+    dest: "{{ ansible_user_dir }}/.kube/config"
+    remote_src: yes
+    owner: "{{ ansible_user_id }}"
+    group: "{{ ansible_user_gid }}"
+    mode: '0600'
