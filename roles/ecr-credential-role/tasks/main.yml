@@ -1,10 +1,10 @@
 ---
 # 1. التأكد من تثبيت AWS CLI على جميع العقد (مهم لسحب التوكن)
-- name: Ensure awscli is installed (Needed for ECR Token generation)
+- name: Ensure awscli is installed (Needed for ECR Token generation) 
   ansible.builtin.apt:
     name: awscli
     state: present
-  when: ansible_os_family == 'Debian' # تأكد من نوع نظام التشغيل إذا كان مطلوباً
+  when: ansible_os_family == 'Debian'
 
 # 2. إنشاء Script تحديث الـ Secret على الماستر Node فقط
 - name: Create ECR refresh script on Master Node
@@ -25,7 +25,7 @@
       # استخدام AWS CLI (الذي يستخدم IAM Role) لجلب رمز الدخول المؤقت
       TOKEN=$(/usr/bin/aws ecr get-login-password --region $ECR_REGION)
       
-      # إنشاء أو تحديث الـ Secret (استخدام --force للكلاستر القديم)
+      # إنشاء أو تحديث الـ Secret (حذف القديم وإضافة الجديد)
       kubectl delete secret $SECRET_NAME --ignore-not-found -n $SECRET_NAMESPACE
       kubectl create secret docker-registry $SECRET_NAME \
         --docker-server=$ECR_REGISTRY \
@@ -33,14 +33,23 @@
         --docker-password="${TOKEN}" \
         --namespace=$SECRET_NAMESPACE
     mode: '0755'
-  when: ansible_hostname == 'kube-master1' # افترض أن الـ Master هو kube-master1 (عدلها حسب Inventory)
+  # الشرط الصحيح لضمان التنفيذ على الماستر فقط
+  when: inventory_hostname == 'kube-master1'
 
+# يتم وضع هذه المهمة مباشرة بعد مهمة "Create ECR refresh script on Master Node"
+- name: Execute ECR refresh script immediately after creation (Run Once)
+  ansible.builtin.command: /usr/local/bin/ecr-refresh.sh
+  register: ecr_refresh_immediate_status
+  changed_when: ecr_refresh_immediate_status.rc == 0
+  become: yes
+  when: inventory_hostname == 'kube-master1'
 # 3. جدولة التحديث باستخدام Cron
-- name: Schedule ECR credential refresh via Cron to run every 6 hours
+# مهمة Cron المعدلة (كل ساعة)
+- name: Schedule ECR credential refresh via Cron to run every hour
   ansible.builtin.cron:
     name: "ECR credential refresh"
-    minute: "0"
-    hour: "*/6" 
+    minute: "0" # يتم التنفيذ في بداية كل ساعة (00:00, 01:00, 02:00, وهكذا)
+    hour: "*"   # تم التعديل ليتم التنفيذ كل ساعة
     job: "/usr/local/bin/ecr-refresh.sh > /dev/null 2>&1"
     user: root
-  when: ansible_hostname == 'kube-master1'
+  when: inventory_hostname == 'kube-master1'
