@@ -1,0 +1,8 @@
+kubeconfig_path: "/etc/kubernetes/admin.conf"
+
+argocd_namespace: "argocd"
+argocd_server_nodeport: 30096   
+
+argocd_admin_username: "admin"       
+argocd_admin_password: "admin123"  
+

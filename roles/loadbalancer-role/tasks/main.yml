@@ -1,0 +1,69 @@
+- name: Update apt cache
+  apt:
+    update_cache: yes
+
+- name: Install nginx and openssl
+  apt:
+    name:
+      - nginx
+      - openssl
+    state: present
+
+- name: Create directories for TLS
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - "/etc/ssl/certs"
+    - "/etc/ssl/private"
+
+- name: Generate self-signed TLS certificate
+  command: >
+    openssl req -x509 -nodes -days 365
+    -newkey rsa:2048
+    -keyout {{ tls_key_path }}
+    -out {{ tls_cert_path }}
+    -subj "/CN={{ server_name }}/O=ArgoCD"
+  args:
+    creates: "{{ tls_cert_path }}"
+
+- name: Configure nginx reverse proxy for ArgoCD
+  copy:
+    dest: /etc/nginx/sites-available/argocd.conf
+    content: |
+      server {
+          listen 443 ssl;
+          server_name {{ server_name }};
+
+          ssl_certificate {{ tls_cert_path }};
+          ssl_certificate_key {{ tls_key_path }};
+
+          location / {
+              proxy_pass https://{{ argocd_node_ip }}:{{ argocd_nodeport_https }};
+              proxy_ssl_verify off;
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          }
+      }
+  notify: Reload nginx
+
+- name: Enable nginx site
+  file:
+    src: /etc/nginx/sites-available/argocd.conf
+    dest: /etc/nginx/sites-enabled/argocd.conf
+    state: link
+  notify: Reload nginx
+
+- name: Remove default nginx site
+  file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Reload nginx
+
+- name: Ensure nginx is running and enabled
+  service:
+    name: nginx
+    state: started
+    enabled: true

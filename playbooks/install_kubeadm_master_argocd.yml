@@ -1,0 +1,5 @@
+- hosts: kubeadm-master
+  become: yes
+  roles:
+    - master-argocd-role
+

@@ -1,0 +1,84 @@
+- name: Create ArgoCD Namespace using command
+  ansible.builtin.command: kubectl create namespace argocd
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  register: ns_create_result
+  failed_when:
+    - ns_create_result.rc != 0
+    - "'already exists' not in ns_create_result.stderr"
+  changed_when: "'created' in ns_create_result.stdout"
+
+- name: Deploy ArgoCD Manifests from URL
+  ansible.builtin.command: >
+    kubectl apply -n {{ argocd_namespace }} -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  register: argocd_apply
+  changed_when: argocd_apply.stdout is search("created") or argocd_apply.stdout is search("configured")
+
+- name: Wait for ArgoCD server deployment to be ready
+  ansible.builtin.command: >
+    kubectl wait --for=condition=Available deployment/argocd-server -n argocd --timeout=600s
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  changed_when: false
+
+
+- name: Patch argocd-server service to NodePort and set custom port
+  ansible.builtin.command: >
+    kubectl -n {{ argocd_namespace }} patch svc argocd-server
+    --type='json'
+    -p='[
+      {"op":"replace","path":"/spec/type","value":"NodePort"},
+      {"op":"replace","path":"/spec/ports/1/nodePort","value": {{ argocd_server_nodeport }} }
+    ]'
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  register: patch_argocd_svc
+  changed_when: "'NodePort' in patch_argocd_svc.stdout or 'patched' in patch_argocd_svc.stdout"
+
+
+- name: Download ArgoCD CLI binary
+  ansible.builtin.get_url:
+    url: "https://github.com/argoproj/argo-cd/releases/download/v2.9.13/argocd-linux-amd64"
+    dest: "/tmp/argocd-linux-amd64"
+    mode: '0555'
+  register: download_argocd
+  changed_when: download_argocd.changed
+
+- name: Install ArgoCD CLI
+  ansible.builtin.command: >
+    sudo install -m 555 /tmp/argocd-linux-amd64 /usr/local/bin/argocd
+  args:
+    creates: /usr/local/bin/argocd
+
+
+- name: Get initial admin password from Kubernetes Secret
+  shell: |
+    kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+  register: initial_password
+  changed_when: false
+
+- name: Extract password only
+  set_fact:
+    old_password: "{{ initial_password.stdout.split()[0] }}"
+- name: Login to ArgoCD CLI
+  command: >
+    argocd login localhost:{{ argocd_server_nodeport }}
+    --username admin
+    --password {{ old_password }}
+    --insecure
+  register: argocd_login
+  changed_when: false
+
+- name: Update ArgoCD admin password
+  command: >
+    argocd account update-password
+    --account admin
+    --current-password "{{ old_password }}"
+    --new-password "{{ argocd_admin_password }}"
+    --server localhost:{{ argocd_server_nodeport }}
+    --insecure
+  environment:
+    PATH: "/usr/local/bin:{{ ansible_env.PATH }}"
+
