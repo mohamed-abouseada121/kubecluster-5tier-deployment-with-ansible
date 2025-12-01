@@ -1,0 +1,10 @@
+# إصدار الـ Credential Provider
+ecr_provider_version: "0.5.0"
+ecr_provider_arch: "amd64"
+# 💡 تم تصحيح الـ URL لإضافة 'aws-' ليتطابق مع اسم الملف الفعلي على GitHub
+ecr_provider_url: "https://github.com/kubernetes/cloud-provider-aws/releases/download/v{{ ecr_provider_version }}/ecr-credential-provider-aws-linux-{{ ecr_provider_arch }}" 
+
+# المسارات الرئيسية
+ecr_bin_dir: "/usr/local/bin" 
+ecr_config_path: "/etc/kubernetes/image-credential-provider-config.json"
+kubelet_env_file: "/var/lib/kubelet/kubeadm-flags.env"

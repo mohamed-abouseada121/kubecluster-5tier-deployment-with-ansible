@@ -1,0 +1,46 @@
+---
+# 1. التأكد من تثبيت AWS CLI على جميع العقد (مهم لسحب التوكن)
+- name: Ensure awscli is installed (Needed for ECR Token generation)
+  ansible.builtin.apt:
+    name: awscli
+    state: present
+  when: ansible_os_family == 'Debian' # تأكد من نوع نظام التشغيل إذا كان مطلوباً
+
+# 2. إنشاء Script تحديث الـ Secret على الماستر Node فقط
+- name: Create ECR refresh script on Master Node
+  ansible.builtin.copy:
+    dest: /usr/local/bin/ecr-refresh.sh
+    content: |
+      #!/bin/bash
+      
+      # تأكد من متغيرات البيئة KUBECONFIG إذا لزم الأمر
+      export KUBECONFIG=/etc/kubernetes/admin.conf
+      
+      # حدد معلومات ECR (استخدم القيم الثابتة للحساب والمنطقة)
+      ECR_REGION="us-east-1"
+      ECR_REGISTRY="772683617793.dkr.ecr.us-east-1.amazonaws.com"
+      SECRET_NAME="ecr-creds"
+      SECRET_NAMESPACE="default"
+      
+      # استخدام AWS CLI (الذي يستخدم IAM Role) لجلب رمز الدخول المؤقت
+      TOKEN=$(/usr/bin/aws ecr get-login-password --region $ECR_REGION)
+      
+      # إنشاء أو تحديث الـ Secret (استخدام --force للكلاستر القديم)
+      kubectl delete secret $SECRET_NAME --ignore-not-found -n $SECRET_NAMESPACE
+      kubectl create secret docker-registry $SECRET_NAME \
+        --docker-server=$ECR_REGISTRY \
+        --docker-username=AWS \
+        --docker-password="${TOKEN}" \
+        --namespace=$SECRET_NAMESPACE
+    mode: '0755'
+  when: ansible_hostname == 'kube-master1' # افترض أن الـ Master هو kube-master1 (عدلها حسب Inventory)
+
+# 3. جدولة التحديث باستخدام Cron
+- name: Schedule ECR credential refresh via Cron to run every 6 hours
+  ansible.builtin.cron:
+    name: "ECR credential refresh"
+    minute: "0"
+    hour: "*/6" 
+    job: "/usr/local/bin/ecr-refresh.sh > /dev/null 2>&1"
+    user: root
+  when: ansible_hostname == 'kube-master1'

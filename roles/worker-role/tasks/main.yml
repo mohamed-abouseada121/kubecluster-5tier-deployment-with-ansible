@@ -89,6 +89,7 @@
       - kubeadm
       - kubelet
       - kubectl
+      - amazon-ecr-credential-helper
     state: present
     update_cache: yes
 
@@ -135,4 +136,23 @@
   args:
     creates: /etc/kubernetes/kubelet.conf
 
+
+- name: Ensure .docker directory exists
+  file:
+    path: /root/.docker
+    state: directory
+    mode: '0700'
+    owner: root
+    group: root
+
+- name: Create Docker config.json with ECR credsStore
+  copy:
+    dest: /root/.docker/config.json
+    content: |
+      {
+          "credsStore": "ecr-login"
+      }
+    owner: root
+    group: root
+    mode: '0600'
 

@@ -1,0 +1,7 @@
+- hosts: 
+   - kubeadm-master
+   - kubeadm-workers
+  become: yes
+  roles:
+    - ecr-credential-role
+
