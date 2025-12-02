@@ -159,6 +159,15 @@
     content: |
       export KUBECONFIG=/etc/kubernetes/admin.conf
 
+- name: Wait for all control-plane pods to be ready
+  ansible.builtin.shell: >
+    kubectl --kubeconfig=/etc/kubernetes/admin.conf get pods -n kube-system
+    --field-selector=status.phase!=Running --no-headers | wc -l
+  register: non_running_pods
+  retries: 10
+  delay: 15
+  until: non_running_pods.stdout|int == 0
+  
 - name: Install Flannel CNI after control-plane up
   ansible.builtin.command: kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml
   environment:
