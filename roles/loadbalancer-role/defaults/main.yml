@@ -1,7 +1,7 @@
 # Node IP of the Kubernetes cluster running ArgoCD
-argocd_node_ip: "172.31.12.86"
-grafana_node_ip: "172.31.12.86"
-prometheus_node_ip: "172.31.12.86"
+argocd_node_ip: "172.31.3.241"
+grafana_node_ip: "172.31.3.241"
+prometheus_node_ip: "172.31.3.241"
 # NodePort of ArgoCD HTTPS
 argocd_nodeport_https: 30096
 prometheus_node_port: 32090
