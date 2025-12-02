@@ -164,7 +164,7 @@
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
   changed_when: false
-
+  become: yes
 - name: Generate fresh kubeadm join command
   ansible.builtin.command: kubeadm token create --print-join-command
   register: fresh_join_command
