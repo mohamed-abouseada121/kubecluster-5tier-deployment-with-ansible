@@ -151,7 +151,7 @@
     remote_src: yes
     owner: "{{ ansible_user_id }}"
     group: "{{ ansible_user_gid }}"
-    mode: '0600'
+    mode: '0755'
 
 - name: Export kubeconfig in /etc/profile.d for persistent kubectl usage
   ansible.builtin.copy:
