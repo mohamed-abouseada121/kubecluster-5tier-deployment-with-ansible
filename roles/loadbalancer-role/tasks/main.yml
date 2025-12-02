@@ -1,16 +1,20 @@
+---
+# هذا الملف يقوم بإعداد NGINX كـ Reverse Proxy آمن (HTTPS)
+# لـ ArgoCD (المسار الرئيسي /)، Grafana، و Prometheus (المسارات الفرعية).
+
 - name: Update apt cache
-  apt:
+  ansible.builtin.apt:
     update_cache: yes
 
 - name: Install nginx and openssl
-  apt:
+  ansible.builtin.apt:
     name:
       - nginx
       - openssl
     state: present
 
 - name: Create directories for TLS
-  file:
+  ansible.builtin.file:
     path: "{{ item }}"
     state: directory
     mode: '0755'
@@ -19,7 +23,7 @@
     - "/etc/ssl/private"
 
 - name: Generate self-signed TLS certificate
-  command: >
+  ansible.builtin.command: >
     openssl req -x509 -nodes -days 365
     -newkey rsa:2048
     -keyout {{ tls_key_path }}
@@ -27,11 +31,28 @@
     -subj "/CN={{ server_name }}/O=ArgoCD"
   args:
     creates: "{{ tls_cert_path }}"
-
-- name: Configure nginx reverse proxy for ArgoCD
-  copy:
+- name: Configure nginx reverse proxy for Grafana and ArgoCD
+  ansible.builtin.copy:
     dest: /etc/nginx/sites-available/argocd.conf
     content: |
+      # ---------------------------
+      # Grafana → HTTP
+      # ---------------------------
+      server {
+          listen 80;
+          server_name {{ server_name }};
+
+          location / {
+              proxy_pass http://{{ grafana_node_ip }}:{{ grafana_node_port }}/;
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          }
+      }
+
+      # ---------------------------
+      # ArgoCD → HTTPS
+      # ---------------------------
       server {
           listen 443 ssl;
           server_name {{ server_name }};
@@ -40,30 +61,33 @@
           ssl_certificate_key {{ tls_key_path }};
 
           location / {
-              proxy_pass https://{{ argocd_node_ip }}:{{ argocd_nodeport_https }};
+              proxy_pass https://{{ argocd_node_ip }}:{{ argocd_nodeport_https }}/;
               proxy_ssl_verify off;
+
               proxy_set_header Host $host;
               proxy_set_header X-Real-IP $remote_addr;
               proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
           }
       }
   notify: Reload nginx
 
+
 - name: Enable nginx site
-  file:
+  ansible.builtin.file:
     src: /etc/nginx/sites-available/argocd.conf
     dest: /etc/nginx/sites-enabled/argocd.conf
     state: link
   notify: Reload nginx
 
 - name: Remove default nginx site
-  file:
+  ansible.builtin.file:
     path: /etc/nginx/sites-enabled/default
     state: absent
   notify: Reload nginx
 
 - name: Ensure nginx is running and enabled
-  service:
+  ansible.builtin.service:
     name: nginx
     state: started
     enabled: true

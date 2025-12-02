@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: prometheus-pv
+  labels:
+    type: local
+spec:
+  # هذا السعة يجب أن تطابق السعة المطلوبة في PersistentVolumeClaim (عادةً 8GB الافتراضية)
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-storage
+  hostPath:
+    # تأكد من وجود هذا المسار على عقدة Kubernetes حيث سيتم تشغيل Prometheus
+    path: "/mnt/prometheus/data"

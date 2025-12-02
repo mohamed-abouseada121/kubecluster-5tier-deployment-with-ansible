@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  # هذا الاسم حاسم. يجب أن يطابق الاسم الافتراضي الذي يتوقعه Helm Chart لـ Prometheus Server
+  name: prometheus-server
+  namespace: prometheus
+spec:
+  # يجب أن يطابق هذا الاسم StorageClass المحدد في ملف PV لتتم عملية الربط (Binding)
+  storageClassName: local-storage
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      # يجب أن تكون أقل من أو تساوي سعة PV (10Gi)
+      storage: 1Gi

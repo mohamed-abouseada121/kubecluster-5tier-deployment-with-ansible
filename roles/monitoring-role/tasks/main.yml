@@ -1,0 +1,120 @@
+- name: Calculate Helm archive filename using defaults
+  ansible.builtin.set_fact:
+    helm_archive: "helm-{{ helm_version }}-{{ ansible_system | lower }}-{{ ansible_architecture | replace('x86_64', 'amd64') }}.tar.gz"
+    helm_extracted_dir: "{{ ansible_system | lower }}-{{ ansible_architecture | replace('x86_64', 'amd64') }}"
+  tags:
+    - setup
+    - helm_install
+
+- name: Download Helm binary archive
+  ansible.builtin.get_url:
+    url: "https://get.helm.sh/{{ helm_archive }}"
+    dest: "/tmp/{{ helm_archive }}"
+    mode: '0644'
+  tags:
+    - setup
+    - helm_install
+
+- name: Extract Helm binary archive
+  ansible.builtin.unarchive:
+    src: "/tmp/{{ helm_archive }}"
+    dest: "/tmp"
+    remote_src: yes
+  tags:
+    - setup
+    - helm_install
+
+- name: Move Helm binary to installation directory
+  ansible.builtin.copy:
+    src: "/tmp/{{ helm_extracted_dir }}/helm"
+    dest: "{{ helm_install_dir }}/helm"
+    mode: '0755'
+    remote_src: yes
+  become: yes
+  tags:
+    - setup
+    - helm_install
+
+- name: Clean up temporary files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  with_items:
+    - "/tmp/{{ helm_archive }}"
+    - "/tmp/{{ helm_extracted_dir }}"
+  tags:
+    - setup
+    - helm_install
+
+- name: Check and Create 'prometheus' Namespace
+  ansible.builtin.shell: |
+    kubectl create namespace prometheus || true
+  tags:
+    - setup
+
+- name: Add Prometheus Community Helm Repository
+  ansible.builtin.command: helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+  register: helm_repo_add
+  changed_when: "'already exists' not in helm_repo_add.stderr"
+  tags:
+    - helm_repo
+
+- name: Add Grafana Helm Repository
+  ansible.builtin.command: helm repo add grafana https://grafana.github.io/helm-charts
+  register: grafana_helm_repo_add
+  changed_when: "'already exists' not in grafana_helm_repo_add.stderr"
+  tags:
+    - helm_repo
+    - grafana
+
+- name: Update Helm Repositories
+  ansible.builtin.command: helm repo update
+  tags:
+    - helm_repo
+
+
+
+- name: Deploy Prometheus using Helm Chart (Disable persistence and add tolerations + Blackbox Exporter)
+  ansible.builtin.command:
+    cmd: >
+      helm upgrade --install prometheus prometheus-community/prometheus
+      --namespace prometheus
+      --set server.service.type=NodePort
+      --set server.service.nodePort={{ prometheus_node_port }}
+      --set server.service.targetPort=9090
+      --set server.persistentVolume.enabled=false
+      --set alertmanager.enabled=false
+      --set server.tolerations[0].operator=Exists
+      --set kube-state-metrics.tolerations[0].operator=Exists
+      --set pushgateway.tolerations[0].operator=Exists
+      --set nodeExporter.tolerations[0].operator=Exists
+      --set blackboxExporter.enabled=true
+      --set blackboxExporter.tolerations[0].operator=Exists
+  tags:
+    - prometheus
+
+- name: Deploy Grafana using Helm Chart (Disable persistence, add tolerations, and configure Prometheus Datasource)
+  ansible.builtin.command:
+    cmd: >
+      helm upgrade --install grafana grafana/grafana
+      --namespace prometheus
+      --set service.type=NodePort
+      --set service.nodePort={{ grafana_node_port }}
+      --set persistence.enabled=false
+      --set tolerations[0].operator=Exists
+      --set adminUser={{ grafana_admin_user | default('admin') }}
+      --set adminPassword={{ grafana_admin_password | default('prom-monitor') }}
+      --set datasources."datasources\\.yaml".apiVersion=1
+      --set datasources."datasources\\.yaml".datasources[0].name=Prometheus
+      --set datasources."datasources\\.yaml".datasources[0].type=prometheus
+      --set datasources."datasources\\.yaml".datasources[0].url=http://prometheus-server.prometheus.svc.cluster.local
+      --set datasources."datasources\\.yaml".datasources[0].access=proxy
+      --set datasources."datasources\\.yaml".datasources[0].isDefault=true
+      --set dashboards.default.node.gnetId=11074
+      --set dashboards.default.node.datasource=Prometheus
+      --set dashboards.default.k8s.gnetId=6417
+      --set dashboards.default.k8s.datasource=Prometheus
+      --set dashboards.default.blackbox.gnetId=7587
+      --set dashboards.default.blackbox.datasource=Prometheus
+  tags:
+    - grafana
