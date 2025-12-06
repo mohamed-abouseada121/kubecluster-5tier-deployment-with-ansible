@@ -36,6 +36,9 @@ We moved away from "Push-based" deployments (like `kubectl apply` from Jenkins) 
     *   Automatically **Syncs** the state.
     *   Performs a Rolling Update on the Kubernetes Cluster.
 
+![ArgoCD Interface](argocd_screenshot.png)
+*Figure 1: ArgoCD syncing the application state.*
+
 ---
 
 ## 🛡️ Security Implementations
@@ -64,6 +67,9 @@ Everything is monitored using a modern stack deployed via **Helm** and **Ansible
     *   Node Health (CPU/Memory/Disk).
     *   Pod Performance.
     *   Application Availability (Blackbox / HTTP Checks).
+
+![Grafana Dashboard](grafanascreenshot.png)
+*Figure 2: Grafana Monitoring Dashboard.*
 
 ---
 
